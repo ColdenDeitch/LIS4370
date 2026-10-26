@@ -1,0 +1,527 @@
+---
+title: "Week 9 TRACE Lab: Association Rules with Titanic Data"
+author: "Colden Deitch"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    number_sections: true
+---
+
+# Lab overview
+
+In this lab, you will use the TRACE framework to examine survival patterns in the Titanic dataset and mine association rules with the `arules` package. You will begin with descriptive questions, create reusable functions, generate rules, and evaluate whether the rules are meaningful, well-supported, and responsibly interpreted.
+
+TRACE:
+
+- **T: Think** about the analytical question and define the quantities you need.
+- **R: Retrieve** and inspect the provided RData file.
+- **A: Analyze** descriptive patterns and association rules.
+- **C: Communicate** selected rules in accurate natural language.
+- **E: Evaluate** rule quality, limitations, and possible overinterpretation.
+
+# Learning objectives
+
+After completing this lab, you should be able to:
+
+1. Load an `.rdata` file and identify the object it creates.
+2. Inspect categorical variables and verify their levels.
+3. Distinguish an overall percentage from a conditional percentage.
+4. Write and test reusable R functions.
+5. Generate association rules using `apriori()`.
+6. Interpret support, confidence, coverage, lift, and count.
+7. Filter and sort association rules using quality measures.
+8. Compare descriptive analysis with automated rule discovery.
+9. Explain why association rules do not establish causation or guarantee prediction.
+
+# Required materials
+
+The file `titanic.raw.rdata` is already provided in the `data` folder:
+
+```text
+data/titanic.raw.rdata
+```
+
+Do not rename or modify the original file.
+
+# Required packages
+
+Install missing packages in the Console, not in the submitted document.
+
+```{r install-packages, eval=FALSE}
+install.packages(c("arules", "arulesViz"))
+```
+
+```{r setup, message=FALSE, warning=FALSE}
+library(arules)
+library(arulesViz)
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 8,
+  fig.height = 5
+)
+```
+
+# T: Think
+
+## Task 1: Frame the analytical question
+
+The guiding question is:
+
+> Which combinations of passenger characteristics are associated with survival in this dataset?
+
+Before writing code, answer the following:
+
+1. Which variable represents the outcome of interest?
+2. Which variables may appear on the left-hand side of a survival rule?
+3. What is the difference between asking “What percentage of all people were surviving first-class female adults?” and “What percentage of first-class female adults survived?”
+4. Why does an association between passenger characteristics and survival not prove causation?
+
+**Your response:**
+
+> The variable that represents the outcome of interest is "survived". Variables that may appear on the left side might be class, age, and sex. The difference between those questions is that the total population is all adults and the second has a total population of first class female adults. The dataset is observational, so we cannot see proof that there is a correlation that proves causation. 
+
+## Task 2: Predict possible patterns
+
+Before seeing the results, make two predictions about passenger groups that may have higher survival percentages. Explain the reasoning behind each prediction. These are hypotheses, not conclusions.
+
+**Your predictions:**
+
+> Women would likely have a higher survival percent because women and children tend to be evacuated first. First class passengers also probably have higher priority to easier evacuation routes, so they are more likely to survive. 
+
+## Task 3: Define rule-quality measures
+
+In your own words, define:
+
+- **Support:** How common are the left- and right-hand-side items together in the full dataset?
+- **Confidence:** Among records matching the left-hand side, how often does the right-hand side occur?
+- **Coverage:** How common is the left-hand side in the full dataset?
+- **Lift:** How much more often does the right-hand side occur with the left-hand side than expected from its overall frequency?
+- **Count:** How many records support the complete rule?
+
+Why is it risky to select a rule using confidence alone?
+
+**Your response:**
+
+> Confidence alone is risky because we also need to consider the count of the data. 
+
+# R: Retrieve and inspect
+
+## Task 4: Confirm and load the file
+
+```{r check-and-load}
+stopifnot(file.exists(file.path("data", "titanic.raw.rdata")))
+
+load(file.path("data", "titanic.raw.rdata"))
+
+objects()
+```
+
+The file should create an object named `titanic.raw`. Create a shorter object named `t`.
+
+```{r create-t}
+t <- titanic.raw
+```
+
+## Task 5: Inspect the structure
+
+```{r inspect-data}
+dim(t)
+str(t)
+head(t)
+summary(t)
+```
+
+Verify the possible values for each variable.
+
+```{r inspect-levels}
+lapply(t, unique)
+```
+
+Answer:
+
+1. How many observations and variables are present?
+2. What are the levels of `Class`, `Sex`, `Age`, and `Survived`?
+3. Are any values missing?
+4. Why must spelling and capitalization match these levels when filtering?
+
+**Your response:**
+
+> There are 2201 observations and 4 variables. Class has four levels in order, sex has male and female, age has adult and child, and survived has yes or no. There are no missing values, and spelling and capitalization matter because it is an exact word that must match the caetgories. 
+
+# A: Analyze
+
+## Task 6: Calculate overall percentages
+
+Complete the named vector below. Each result should represent the proportion of the **entire dataset** belonging to the specified category.
+
+```{r overall-percentages}
+overall_percentages <- c(
+  survived = mean(t$Survived == "Yes"),
+  child = mean(t$Age == "Child"),
+  female = mean(t$Sex == "Female"),
+  first_class = mean(t$Class == "1st")
+)
+
+round(overall_percentages * 100, 1)
+```
+
+Write one accurate sentence for each percentage.
+
+**Your interpretation:**
+
+> 32.3 percent of passengers survived. 5 percent of those who survived were children. 21.4 percent of those who survived were women. First class passengers made up 14.8 percent of survivors. 
+
+## Task 7: Calculate conditional survival percentages
+
+A conditional survival percentage uses the number who survived in a group as the numerator and the total number in that same group as the denominator.
+
+Complete the helper function.
+
+```{r conditional-helper}
+conditional_survival <- function(variable, category) {
+  group_rows <- t[[variable]] == category
+  survived_rows <- t$Survived == "Yes"
+
+  mean(survived_rows[group_rows])
+}
+```
+
+Use the function to calculate survival percentages for the following groups.
+
+```{r conditional-percentages}
+conditional_results <- c(
+  children = conditional_survival("Age", "Child"),
+  females = conditional_survival("Sex", "Female"),
+  first_class = conditional_survival("Class", "1st"),
+  third_class = conditional_survival("Class", "3rd")
+)
+
+round(conditional_results * 100, 1)
+```
+
+### Denominator check
+
+Explain why dividing the number of surviving children by `nrow(t)` would **not** answer the question “What percentage of children survived?”
+
+**Your response:**
+
+> Replace this text with your answer.
+
+## Task 8: Create a reusable filtering function
+
+Write a function that returns records matching a specified class, sex, age, and survival status.
+
+```{r filter-function}
+filter_passengers <- function(class_value, sex_value, age_value, survived_value) {
+  t[
+    t$Class == class_value &
+    t$Sex == sex_value &
+    t$Age == age_value &
+    t$Survived == survived_value,
+  ]
+}
+```
+
+Test the function.
+
+```{r test-filter-function}
+first_female_adult_nonsurvivors <- filter_passengers(
+  "1st", "Female", "Adult", "No"
+)
+
+nrow(first_female_adult_nonsurvivors)
+head(first_female_adult_nonsurvivors)
+```
+
+### Function check
+
+Change one argument at a time and verify that the returned records match the requested criteria. Explain how you checked the result.
+
+**Your response:**
+
+> I tested the filtering function by changing one argument at a time while keeping the other arguments constant. I checked the number of returned records and inspected the results. I also verified that each returned record matched the requested class, sex, age, and survival status using logical comparisons. The checks returned TRUE when the records matched all four criteria, so the function filtered the data correctly.
+
+## Task 9: Create a subgroup survival function
+
+The function below answers:
+
+> Among passengers with a specified class, sex, and age, what percentage survived?
+
+Complete the function. Notice that the denominator is the size of the subgroup, not the size of the entire dataset.
+
+```{r subgroup-function}
+subgroup_survival <- function(class_value, sex_value, age_value) {
+  subgroup <- t[
+    t$Class == class_value &
+    t$Sex == sex_value &
+    t$Age == age_value,
+  ]
+
+  if (nrow(subgroup) == 0) {
+    return(NA_real_)
+  }
+
+  mean(subgroup$Survived == "Yes") * 100
+}
+```
+
+Test the function with several groups.
+
+```{r test-subgroup-function}
+subgroup_survival("3rd", "Male", "Child")
+subgroup_survival("3rd", "Male", "Adult")
+subgroup_survival("1st", "Female", "Child")
+subgroup_survival("1st", "Female", "Adult")
+```
+
+Compare the output for children and adults within third-class male passengers. Then compare children and adults within first-class female passengers.
+
+**Your interpretation:**
+
+> A higher percentage of male children in 3rd class survived than male adults in 3rd class. High amounts of both adult women and children women survived, almost all of them. 
+
+## Task 10: Generate association rules
+
+Generate rules with:
+
+- Minimum support of `0.005`
+- Minimum confidence of `0.50`
+- `Survived=Yes` as the only right-hand-side item
+
+Complete the missing elements.
+
+```{r generate-rules}
+
+ruleset <- apriori(
+  t,
+  parameter = list(
+    support = 0.005,
+    confidence = 0.50
+  ),
+  appearance = list(
+    default = "lhs",
+    rhs = "Survived=Yes"
+  )
+)
+
+```
+
+Inspect the result.
+
+```{r summarize-rules}
+summary(ruleset)
+inspect(ruleset)
+```
+
+Answer:
+
+1. How many rules were generated?
+2. What does setting `rhs = "Survived=Yes"` accomplish?
+3. What types of items are permitted on the left-hand side?
+4. How would increasing the minimum support affect the rules returned?
+
+**Your response:**
+
+> There are 14 generated rules. The use of this setting sets one side equal to the event of a passenger of a specific type surviving. Descriptive items, such as age, sex, and class are permitted on the left side. Increasing the minimum support would mean fewer rules. 
+
+## Task 11: Visualize the rules
+
+```{r visualize-rules}
+plot(ruleset)
+```
+
+Describe what is mapped to the x-axis, y-axis, point size, and color in the visualization produced in your version of `arulesViz`. Identify one rule or region of the plot that deserves closer inspection.
+
+**Your response:**
+
+> The x axis is support, the y axis is confidence, and lift is the color. There is a dot at the bottom that deserves further inspection. 
+
+## Task 12: Filter and rank rules
+
+Keep rules with lift greater than 2, then sort them from highest to lowest lift.
+
+```{r filter-rules}
+goodrules <- ruleset[quality(ruleset)$lift > 2]
+
+goodrules <- sort(
+  goodrules,
+  by = "lift",
+  decreasing = TRUE
+)
+
+inspect(goodrules)
+```
+
+Select three rules for closer examination. Do **not** select rules only because they have the highest lift. Also consider support, count, redundancy, interpretability, and usefulness.
+
+For each selected rule, record:
+
+- Left-hand side
+- Right-hand side
+- Support
+- Confidence
+- Lift
+- Count
+
+**Your selected rules:**
+
+> The first selected rule is second-class females, with a support of 4.23%, a confidence of 87.74%, a lift of 2.72, and a count of 93 passengers. The second rule is second-class children, with a support of 1.09%, a confidence of 100%, a lift of 3.10, and a count of 24 passengers. The third rule is first-class adult females, with a support of 6.37%, a confidence of 97.22%, a lift of 3.01, and a count of 140 passengers. For all three rules, the right-hand side is Survived=Yes, meaning they describe passengers who survived.
+
+# C: Communicate
+
+## Task 13: Translate rules into natural language
+
+For each of the three selected rules, write one accurate interpretation using this structure:
+
+> Among records matching [left-hand side], [confidence × 100]% also had [right-hand side]. This combination occurred in [support × 100]% of all records and was [lift] times as frequent as expected from the overall right-hand-side frequency.
+
+Avoid phrases such as:
+
+- “The left-hand side caused survival.”
+- “The rule predicts survival perfectly.”
+- “Everyone in this category survived,” unless the confidence is 1 **and** you clearly state the supporting count.
+
+**Your interpretations:**
+
+> Among records matching second-class females, 87.74% also had Survived=Yes. This combination occurred in 4.23% of all records and was 2.72 times as frequent as expected from the overall survival frequency. Among records matching second-class children, 100% also had Survived=Yes. This combination occurred in 1.09% of all records and was 3.10 times as frequent as expected from the overall survival frequency. Among records matching first-class adult females, 97.22% also had Survived=Yes. This combination occurred in 6.37% of all records and was 3.01 times as frequent as expected from the overall survival frequency.
+
+## Task 14: Compare the two analytical approaches
+
+Write 150–200 words comparing:
+
+1. Descriptive percentages calculated from questions you specified in advance.
+2. Association rules discovered by searching combinations automatically.
+3. One advantage and one limitation of each approach.
+4. Why association-rule output should not automatically be called predictive.
+5. How TRACE encourages human judgment after automated pattern discovery.
+
+**Your comparison:**
+
+> Descriptive percentages answer questions that were specified in advance, such as the overall survival rate or the percentage of females who survived. One advantage is that the results are straightforward to calculate and interpret. However, this approach is limited to the questions being asked and may overlook unexpected relationships. Association rules are used to combine characteristics like passenger class, age, and sex to find survival patterns within the data. They can reveal connections thatmay normally be missed, however, they may sometimes describe a group that isn't big enough to be descriptive. Association-rule output should not be automatically called predictive because correlation does not always equal causation, and we cannot assume that just because something happened that it wasn't random chance. TRACE encourages human judgement by ensuring that a human always inspects data before it is blindly trusted.  
+
+# E: Evaluate
+
+## Task 15: Check rule quality and redundancy
+
+Inspect the top rules and answer:
+
+1. Do any rules express almost the same pattern with an extra condition?
+2. Does the extra condition meaningfully improve confidence or lift?
+3. Does a high-lift rule have low support or a small count?
+4. Would you trust a rule supported by 13 records as much as one supported by 141 or 344 records? Explain.
+5. Which selected rule provides the best balance of strength and coverage?
+
+**Your response:**
+
+> The top rules are almost the same but have one different condition, meaning that most subsets of the overarching conditions will fall in the same range. The extra condition does not improve confidence, it only shwos a subset of the main data. A rule can have a high lift while only counting a small amount of passengers. The higher the number of records, the more confidence I would have. The 344 records would provide the best balance. 
+
+## Task 16: Verify one rule manually
+
+Choose one selected rule. Manually reconstruct its support and confidence using logical filtering. Replace the example conditions with those from your rule.
+
+```{r manual-rule-check}
+lhs_rows <- t$Class == "2nd" & t$Age == "Child"
+rhs_rows <- t$Survived == "Yes"
+
+manual_support <- mean(lhs_rows & rhs_rows)
+manual_confidence <- sum(lhs_rows & rhs_rows) / sum(lhs_rows)
+overall_rhs <- mean(rhs_rows)
+manual_lift <- manual_confidence / overall_rhs
+
+c(
+  support = manual_support,
+  confidence = manual_confidence,
+  lift = manual_lift,
+  count = sum(lhs_rows & rhs_rows)
+)
+```
+
+Compare the manually calculated values with `inspect(ruleset)`. Explain any difference.
+
+**Your response:**
+
+> chose the rule for second-class children and calculated its support and confidence manually in R. The results matched the association rules, with a support of about 0.0109, a confidence of 100%, a lift of 3.10, and a count of 24 passengers.
+
+## Task 17: Evaluate limitations
+
+Answer in complete sentences:
+
+1. Why do association rules show co-occurrence rather than causation?
+2. How do support and confidence thresholds shape what is discovered?
+3. Why might a rare subgroup produce an impressive but fragile rule?
+4. How could class, sex, and age categories hide important variation?
+5. What additional evidence would be needed before applying the patterns to a real decision?
+6. Which interpretation from your analysis is most vulnerable to overstatement?
+
+**Your response:**
+
+> Association rules show co-occurence rather than causation because it is purely observational and could be totally random or it could just so happen to have happened that way a specific time. Higher support thresholds produce fewer rules by excluding small groups, while higher confidence thresholds keep only rules where a larger percentage of the group survived. Lower thresholds find more rules but may include weaker patterns. A rare subgroup might make a rule look really good, but it may be a short count. These categories could hide variation by skewing the data to look a different way than it should. Additional evidence you would need is experimental data. 3
+
+## Task 18: Reproducibility checks
+
+```{r reproducibility-checks}
+stopifnot(file.exists(file.path("data", "titanic.raw.rdata")))
+stopifnot(exists("t"))
+stopifnot(all(c("Class", "Sex", "Age", "Survived") %in% names(t)))
+stopifnot(nrow(t) > 0)
+stopifnot(all(complete.cases(t)))
+stopifnot(length(ruleset) > 0)
+stopifnot(all(
+  grepl("Survived=Yes", labels(rhs(ruleset)), fixed = TRUE)
+))
+```
+
+Explain what each check verifies. Why does passing all checks still not guarantee that the analysis or interpretation is correct?
+
+**Your response:**
+
+> The first check verifies that the Titanic data file exists. The second checks that t has been created. The fourth check makes sure the dataset is not empty. The fifth checks that there are no missing values. The sixth verifies that at least one association rule was created. The last check confirms that every rule has Survived=Yes on the right-hand side. Passing all the checks does not guarante the analysis is correct because the code could contain mistakes, and the results could be interpreted incorrectly. The checks only verify that certain requirements are met, not that the rules show a meaningful relationship.
+
+# Responsible use of AI
+
+You may use an approved AI coding assistant only when permitted by your instructor.
+
+If AI is used:
+
+- Do not ask AI to invent rule outputs or numerical results.
+- Inspect every suggested line before running it.
+- Verify denominators, filtering conditions, thresholds, and rule interpretations.
+- Compare AI explanations with the actual output from R.
+- Do not describe association as causation or guaranteed prediction.
+- Disclose the specific assistance received.
+- Remain responsible for the final submission.
+
+## AI-use disclosure
+
+Complete one statement:
+
+
+> **If AI was not used:** I did not use a generative AI tool to complete this lab.
+
+# Submission checklist
+
+- [ ] I used the provided `data/titanic.raw.rdata` file.
+- [ ] I verified the dataset structure and category levels.
+- [ ] I distinguished overall percentages from conditional percentages.
+- [ ] I tested both functions with multiple inputs.
+- [ ] I generated rules using the assigned support and confidence thresholds.
+- [ ] I restricted the rule right-hand side to `Survived=Yes`.
+- [ ] I visualized and inspected the rule set.
+- [ ] I filtered and sorted rules using lift.
+- [ ] I considered support and count when selecting rules.
+- [ ] I translated three rules into accurate natural language.
+- [ ] I manually verified one rule.
+- [ ] I evaluated redundancy and limitations.
+- [ ] I completed the AI-use disclosure.
+- [ ] The R Markdown document knits successfully from a clean session.
+
+# Reproducibility information
+
+```{r session-information}
+sessionInfo()
+```
