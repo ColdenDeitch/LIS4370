@@ -1,0 +1,13 @@
+Package: Datacleaner
+Title: Cleans Data for Analysis
+Version: 0.0.0.9000
+Authors@R:
+    person("Colden", "Deitch", email = "cdeitch@usf.edu", role = c("aut", "cre"))
+Description: This package will be used by analysts who are trying to clean data.
+    It will include functions to check for and remove outliers, handle missing
+    data, and allow for seamless data manipulation.
+License: CC0
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Depends: R (>= 3.1.2)
+Config/roxygen2/version: 8.1.1
